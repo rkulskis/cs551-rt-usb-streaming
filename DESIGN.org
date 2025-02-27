@@ -42,7 +42,33 @@ We propose RT-DDS across hosts as the first real-time DDS to span hosts and
 provide coordinated execution with end-to-end latency requirements. We will
 use USB links to connect nodes and communicate host-to-host using the
 USB extensible debug cabability (xDbC), first on Linux, then on Quest to provide
-stronger timing and predictability guarantees than ROS2.
+stronger timing and predictability guarantees than ROS2. Using xDbC we will need
+to construct a real-time USB protocol which incorporates acknowledgements for
+replicating the state of the endpoint buffers on each host as well as provide
+a scheduling mechanism at the OS USB driver level for rate-matched transfers.
+
+#+CAPTION: From boomerang paper; processes which contain thread(s) bound to a VCPU (Main), which is bound to a PCPU (core). Each Main VCPU may have a corresponding IO VCPU with the same budget C and period T to handle the bottom-half of interrupts.
+#+NAME:   fig:b
+#+ATTR_HTML: :width 800px
+[[./vcpu_hierarchy.png]]    
+
+We can guarantee end-to-end latency requirements because of the Quest VCPU
+construct because Quest schedules processes with RMS (Rate Monotonic Scheduling)
+using the Liu & Layland upper bound, which guarantees that a feasible schedule
+that will always meet deadlines exists if the CPU utilization is below a specific
+bound. Additionally, the bottom half of interrupts are handled by IO VCPUs
+so Main VCPUs can execute with negligible performance impact upon an interrupt.
+
+With these timing and predictability guarantees at the operating system level,
+given an end-to-end latency $e$, RT-DDS binds each task in the pipeline to a
+VCPU of period $T=\frac{e}{num\_pipeline\_stages}$ to rate match all services
+in the pipeline (they produce 1 unit of work, reading from all inputs, processing
+the inputs, and writing to all outputs, at the same rate)
+oand $C=max\_execution\_time(f)$
+where $f$ is the service's function and a pipeline stage is a stage in the
+pipeline where the services in it can execute in parallel (i.e. they have all the
+data they need). c.f. topological sort, see [[fig:a]] where the 4 pipeline stages are
+vertically aligned; services $B$ and $C$ are in the same stage.
 
 * Expectations
 ** Pub-sub with end-to-end and throughput latency guarantees
@@ -72,8 +98,14 @@ we can batch samples at a lower frequency.
     2. Sub1 (Host 2): read from Pub1 over USB and flush to a Teensy 4.1 board
        connected to an audio sink to play the audio data
  2. complex DAG with synchronized merging of audio (from 1):
-    $$A|B|C,D|E$$ where | is a subscription, and B|C,D|E means C and D subscribes to
-    B and E subscribes to C and D. 
+    $$A|B,C|D|E$$ where | is a subscription, and B|C,D|E means C and D subscribes to
+    B and E subscribes to C and D (See the figure below)
+
+#+CAPTION: Diagram of $A|B,C|D|E$. Bidirectional communication over xDbC for acks on buffer state. (Simpson's) 4-slot buffers are for asynchronous communication and ring buffers for synchronous.
+#+NAME:   fig:a
+#+ATTR_HTML: :width 800px
+[[./pipeline.png]]
+
 ** Deploy environment
 We will be running experiments on 64-bit Ubuntu Linux standalone for ROS2 and
 32-bit Yocto Linux as a guest on the Quest-V hypervisor, or possibly standalone
